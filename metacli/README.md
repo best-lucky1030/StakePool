@@ -4,7 +4,7 @@
 
 A basic command-line for creating and using the MetaPool. The meta pool is an extension of the SPL-Stake-Pool.
 
-This is the CLI utility. The main doc is here: https://github.com/SolAutoStake/StakePool
+This is the CLI utility. The main doc is here: https://github.com/best-lucky1030/StakePool
 
 This rust-coded CLI expands on the SPL-Stake-Pool CLI. It adds the following commands:
 
@@ -14,7 +14,7 @@ Status: Working:
 
 This command must be *run once*-. It creates the liquidity pool.
 The accounts created by the run must be included into the CLI and the CLI recompiled so the rest of the commands act on the created accounts.
-For the testnet demo, it has been run already and the accounts are defined as constants at https://github.com/SolAutoStake/StakePool/blob/main/metacli/src/main.rs
+For the testnet demo, it has been run already and the accounts are defined as constants at https://github.com/best-lucky1030/StakePool/blob/master/metacli/src/main.rs
 
 ### add-liquidity
 

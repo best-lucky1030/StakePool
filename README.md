@@ -8,13 +8,13 @@ For this project we extended the SPL-stake-pool into our own "Meta-Pool"
 
 This project includes:
 
-* A [Web App UI for the Meta-Pool](https://github.com/SolAutoStake/sol-stakepool-interface) including:
+* A [Web App UI for the Meta-Pool](https://github.com/best-lucky1030/-sol-stakepool-interface) including:
   * Stake accounts management for the SPL-stake-pool
   * Sell stSOL functionality for immediate unstake
 
 * a [Backend Solana Program, the "Meta-Pool"](https://github.com/best-lucky1030/StakePool/tree/master/program) extending the SPL-stake-pool by adding a *Liquidity Pool* and with that the possibility of "selling" your staking pool tokens (stSOL) and receive wSOL immediately. By using this functionality, users can skip the cool-down period and get their wSOL out of the staking-pool in a single step.
 
-* a new [CLI tool, called *meta*](https://github.com/SolAutoStake/StakePool/tree/main/metacli) allowing the same functionality of the SPL-stake-pool CLI, plus:
+* a new [CLI tool, called *meta*](https://github.com/best-lucky1030/StakePool/tree/master/metacli) allowing the same functionality of the SPL-stake-pool CLI, plus:
   * A command to create the liquidity pool: `create-liq pool`
   * A command to `add-liquidity`
   * A command to `sell-stsol` with the command line
