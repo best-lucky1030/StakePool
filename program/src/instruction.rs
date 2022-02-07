@@ -32,7 +32,7 @@ pub struct InitArgs {
 #[repr(C)]
 #[derive(Clone, Debug, PartialEq)]
 pub enum StakePoolInstruction {
-    ///   Initializes a new StakePool.
+    ///   Admin: Initializes a new StakePool.
     ///
     ///   0. `[w]` New StakePool to create.
     ///   1. `[s]` Owner
@@ -44,7 +44,7 @@ pub enum StakePoolInstruction {
     ///   7. `[]` Token program id
     Initialize(InitArgs),
 
-    ///   Creates new program account for accumulating stakes for a particular validator
+    ///   Admin: Creates new program account for accumulating stakes for a particular validator
     ///
     ///   0. `[]` Stake pool account this stake will belong to
     ///   1. `[ws]` Funding account (must be a system account)
@@ -57,7 +57,7 @@ pub enum StakePoolInstruction {
     ///   8. `[]` Stake program
     CreateValidatorStakeAccount,
 
-    ///   Adds validator stake account to the pool
+    ///   Admin: Adds validator stake account to the pool
     ///
     ///   0. `[w]` Stake pool
     ///   1. `[s]` Owner
@@ -73,7 +73,7 @@ pub enum StakePoolInstruction {
     ///  11. `[]` Stake program id,
     AddValidatorStakeAccount,
 
-    ///   Removes validator stake account from the pool
+    ///   Admin: Removes validator stake account from the pool
     ///
     ///   0. `[w]` Stake pool
     ///   1. `[s]` Owner
@@ -88,21 +88,21 @@ pub enum StakePoolInstruction {
     ///  10. `[]` Stake program id,
     RemoveValidatorStakeAccount,
 
-    ///   Updates balances of validator stake accounts in the pool
+    ///   Anyone: Updates balances of validator stake accounts in the pool
     ///   
     ///   0. `[w]` Validator stake list storage account
     ///   1. `[]` Sysvar clock account
     ///   2. ..2+N ` [] N validator stake accounts to update balances
     UpdateListBalance,
 
-    ///   Updates total pool balance based on balances in validator stake account list storage
+    ///   Anyone: Updates total pool balance based on balances in validator stake account list storage
     ///
     ///   0. `[w]` Stake pool
     ///   1. `[]` Validator stake list storage account
     ///   2. `[]` Sysvar clock account
     UpdatePoolBalance,
 
-    ///   Deposit some stake into the pool.  The output is a "pool" token representing ownership
+    ///   User: Deposit some stake into the pool.  The output is a "pool" token representing ownership
     ///   into the pool. Inputs are converted to the current ratio.
     ///
     ///   0. `[w]` Stake pool
@@ -120,8 +120,9 @@ pub enum StakePoolInstruction {
     ///   12. `[]` Stake program id,
     Deposit,
 
-    ///   Withdraw the token from the pool at the current ratio.
-    ///   The amount withdrawn is the MIN(u64, stake size)
+    ///   User: "Withdraw". Burn the token and return a staked account whose value reflects burned tokens value
+    ///   How: move staked acc into (4.Unitialized stake account to receive withdrawal) and assigns authority to (5. `[]` User account to set as a new withdraw authority)
+    ///   Basic asserts: amount withdrawn <= stake size
     ///
     ///   0. `[w]` Stake pool
     ///   1. `[w]` Validator stake list storage account
@@ -137,7 +138,7 @@ pub enum StakePoolInstruction {
     ///   userdata: amount to withdraw
     Withdraw(u64),
 
-    ///   Update the staking pubkey for a stake
+    ///   Admin: Update the staking pubkey for a stake
     ///
     ///   0. `[w]` StakePool
     ///   1. `[s]` Owner
@@ -148,13 +149,45 @@ pub enum StakePoolInstruction {
     ///   6. `[]` Stake program id,
     SetStakingAuthority,
 
-    ///   Update owner
+    ///   Admin: Update owner
     ///
     ///   0. `[w]` StakePool
     ///   1. `[s]` Owner
     ///   2. '[]` New owner pubkey
     ///   3. '[]` New owner fee account
     SetOwner,
+
+    ///   Liq.Provider: Deposit some wSOL into the stSOL->wSOL LP. The output is a "LP" token representing LP shares
+    ///
+    ///   Deposit wsol into the LP. The output is a "metalp" token
+    ///   representing ownership into the LP.
+    ///
+    ///   0. `[]` Stake pool (meta Stake pool program instance state)
+    ///   1. `[]` SPL Token Program
+    ///   2. `[w]` $METALP token mint account
+    ///   3. `[]` $METALP mint/withdraw authority
+    ///   4. `[w]` User account with wsol to transfer from
+    ///   5. `[]` withdraw authority to remove wsol from user account
+    ///   4. `[w]` Liq-pool dest account - Liq.pool acc to receive wSOL
+    ///   6. `[w]` user Unitialized account to receive METALP
+    ///   userdata: amount to withdraw
+    AddLiquidity(u64),
+
+    ///   User: "Sell stSOL". Burn the token and return a wSOL account whose value reflects burned tokens value
+    ///   How: move wSOL from LP to user acc (4.Unitialized account to receive withdrawal) and assigns authority to (5. `[]` User account to set as a new withdraw authority)
+    ///   Basic asserts: amount withdrawn <= wSOL in the pool
+    ///
+    ///   0. `[]` Stake Pool (Stake pool state)
+    ///   1. `[]` Liq Pool (Liq pool state)
+    ///   2. `[]` SPL Token Program
+    ///   3. `[w]` liq pool wSOL account
+    ///   4. `[w]` liq pool stSOL account
+    ///   5. `[]` liq pool authority
+    ///   6. `[w]` User wSOL account (unitialized, to receive)
+    ///   7. `[w]` User stSOL account (to take tokens from)
+    ///   8. `[]` User authority (signer)
+    ///   userdata: amount to sell
+    SellstSOL(u64),
 }
 
 impl StakePoolInstruction {
@@ -181,6 +214,14 @@ impl StakePoolInstruction {
             }
             8 => Self::SetStakingAuthority,
             9 => Self::SetOwner,
+            10 => {
+                let val: &u64 = unpack(input)?;
+                Self::AddLiquidity(*val)
+            }
+            11 => {
+                let val: &u64 = unpack(input)?;
+                Self::SellstSOL(*val)
+            }
             _ => return Err(ProgramError::InvalidAccountData),
         })
     }
@@ -225,6 +266,18 @@ impl StakePoolInstruction {
             }
             Self::SetOwner => {
                 output[0] = 9;
+            }
+            Self::AddLiquidity(val) => {
+                output[0] = 10;
+                #[allow(clippy::cast_ptr_alignment)]
+                let value = unsafe { &mut *(&mut output[1] as *mut u8 as *mut u64) };
+                *value = *val;
+            }
+            Self::SellstSOL(val) => {
+                output[0] = 11;
+                #[allow(clippy::cast_ptr_alignment)]
+                let value = unsafe { &mut *(&mut output[1] as *mut u8 as *mut u64) };
+                *value = *val;
             }
         }
         Ok(output)
@@ -371,22 +424,34 @@ pub fn remove_validator_stake_account(
 }
 
 /// Creates `UpdateListBalance` instruction (update validator stake account balances)
+
 pub fn update_list_balance(
+
     program_id: &Pubkey,
     validator_stake_list_storage: &Pubkey,
     validator_stake_list: &[&Pubkey],
+
 ) -> Result<Instruction, ProgramError> {
+
     let mut accounts: Vec<AccountMeta> = validator_stake_list
         .iter()
         .map(|pubkey| AccountMeta::new_readonly(**pubkey, false))
         .collect();
+
+    //   Anyone: Updates balances of validator stake accounts in the pool
+    //   
+    //   0. `[w]` Validator stake list storage account
+    //   1. `[]` Sysvar clock account
+    //   2. ..2+N ` [] N validator stake accounts to update balances
     accounts.insert(0, AccountMeta::new(*validator_stake_list_storage, false));
     accounts.insert(1, AccountMeta::new_readonly(sysvar::clock::id(), false));
+
     Ok(Instruction {
         program_id: *program_id,
         accounts,
         data: StakePoolInstruction::UpdateListBalance.serialize()?,
     })
+
 }
 
 /// Creates `UpdatePoolBalance` instruction (pool balance from the stake account list balances)
@@ -438,6 +503,76 @@ pub fn deposit(
         AccountMeta::new_readonly(sysvar::stake_history::id(), false),
         AccountMeta::new_readonly(*token_program_id, false),
         AccountMeta::new_readonly(*stake_program_id, false),
+    ];
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+///create instruction add_liquidity
+pub fn instruction_add_liquidity(
+    amount:u64,
+    program_id: &Pubkey,
+    liq_pool_state_account: &Pubkey,
+    spl_token_program_id: &Pubkey,
+    meta_lp_mint_account: &Pubkey,
+    meta_lp_mint_authority: &Pubkey,
+    user_wsol_source_account: &Pubkey,
+    user_wsol_withdraw_auth: &Pubkey,
+    liq_pool_wsol_dest_account: &Pubkey,
+    user_dest_meta_lp_account: &Pubkey,
+
+) -> Result<Instruction, ProgramError> {
+
+    let args = StakePoolInstruction::AddLiquidity(amount);
+    let data = args.serialize()?;
+    let accounts = vec![
+        AccountMeta::new_readonly(*liq_pool_state_account, false),
+        AccountMeta::new_readonly(*spl_token_program_id, false),
+        AccountMeta::new(*meta_lp_mint_account, false),
+        AccountMeta::new_readonly(*meta_lp_mint_authority, false),
+        AccountMeta::new(*user_wsol_source_account, false),
+        AccountMeta::new_readonly(*user_wsol_withdraw_auth, false),
+        AccountMeta::new(*liq_pool_wsol_dest_account, false),
+        AccountMeta::new(*user_dest_meta_lp_account, false),
+    ];
+    Ok(Instruction {
+        program_id: *program_id,
+        accounts,
+        data,
+    })
+}
+
+///create instruction sell_st_sol
+pub fn instruction_sell_stsol(
+    amount:u64,
+    program_id: &Pubkey,
+    stake_pool_state_account: &Pubkey,
+    liq_pool_state_account: &Pubkey,
+    spl_token_program_id: &Pubkey,
+    liq_pool_wsol_account: &Pubkey,
+    liq_pool_st_sol_account: &Pubkey,
+    liq_pool_authority: &Pubkey,
+    user_wsol_account: &Pubkey,
+    user_st_sol_account: &Pubkey,
+    user_withdraw_auth: &Pubkey,
+
+) -> Result<Instruction, ProgramError> {
+
+    let args = StakePoolInstruction::SellstSOL(amount);
+    let data = args.serialize()?;
+    let accounts = vec![
+        AccountMeta::new_readonly(*stake_pool_state_account, false),
+        AccountMeta::new_readonly(*liq_pool_state_account, false),
+        AccountMeta::new_readonly(*spl_token_program_id, false),
+        AccountMeta::new(*liq_pool_wsol_account, false),
+        AccountMeta::new(*liq_pool_st_sol_account, false),
+        AccountMeta::new_readonly(*liq_pool_authority, false),
+        AccountMeta::new(*user_wsol_account, false),
+        AccountMeta::new(*user_st_sol_account, false),
+        AccountMeta::new_readonly(*user_withdraw_auth, false),
     ];
     Ok(Instruction {
         program_id: *program_id,

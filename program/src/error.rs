@@ -73,7 +73,26 @@ pub enum StakePoolError {
     /// Account is not rent-exempt
     #[error("AccountNotRentExempt")]
     AccountNotRentExempt,
+    /// invalid program id
+    #[error("IncorrectTokenProgramId")]
+    IncorrectTokenProgramId,
+    /// The deserialization of the account returned something besides State::Mint.
+    #[error("Deserialized account is not an SPL Token mint")]
+    ExpectedMint,
+    /// The deserialization of the account returned something besides State::Account.
+    #[error("Deserialized account is not an SPL Token account")]
+    ExpectedAccount,
+    /// Zero as parameter
+    #[error("Amount should be greater than zero")]
+    ZeroAmount,
+    /// ConversionFailure
+    #[error("ConversionFailure")]
+    ConversionFailure,
+    /// NotEnoughTokensInThePool
+    #[error("NotEnoughTokensInThePool")]
+    NotEnoughTokensInThePool,
 }
+
 impl From<StakePoolError> for ProgramError {
     fn from(e: StakePoolError) -> Self {
         ProgramError::Custom(e as u32)

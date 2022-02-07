@@ -1,0 +1,49 @@
+{
+	"version": "2.0.0",
+	"tasks": [
+		{
+			"type": "shell",
+			"command": "cargo",
+			"args":["test-bpf"],
+			"problemMatcher": ["$rustc"],
+			"group": {
+				"kind": "test",
+				"isDefault": true,
+			},
+			"label": "cargo test-bpf"
+		},
+		{
+			"type": "shell",
+			"command": "cargo",
+			"args":["test-bpf","--test","liquidity","--","--nocapture"],
+			"problemMatcher": ["$rustc"],
+			"group": {
+				"kind": "test",
+				"isDefault": true,
+			},
+			"label": "cargo test-bpf --test liquidity"
+		},
+		{
+			"type": "shell",
+			"command": "cargo",
+			"args":["test-bpf","--test","vsa_add","--","--nocapture"],
+			"problemMatcher": ["$rustc"],
+			"group": {
+				"kind": "test",
+				"isDefault": true,
+			},
+			"label": "cargo test-bpf --test vsa_add"
+		},
+		{
+			"type": "shell",
+			"command": "cargo",
+			"args":["test-bpf","--test","deposit","--","--nocapture"],
+			"problemMatcher": ["$rustc"],
+			"group": {
+				"kind": "test",
+				"isDefault": true,
+			},
+			"label": "cargo test-bpf --test deposit"
+		},
+	]
+}

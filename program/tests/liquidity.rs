@@ -1,11 +1,11 @@
 #![cfg(feature = "test-bpf")]
 
 mod helpers;
-
 use helpers::*;
+
 use solana_program::pubkey::Pubkey;
 
-use solana_program::hash::Hash;
+use solana_program::{hash::Hash};
 use solana_program_test::BanksClient;
 use solana_sdk::{
     instruction::InstructionError,
@@ -15,6 +15,7 @@ use solana_sdk::{
     transport::TransportError,
 };
 use spl_stake_pool::*;
+use spl_stake_pool::processor::Processor;
 use spl_token::error::TokenError;
 
 async fn setup() -> (
@@ -23,170 +24,290 @@ async fn setup() -> (
     Hash,
     StakePoolAccounts,
     ValidatorStakeAccount,
-    DepositInfo,
-    u64,
 ) {
+
     let (mut banks_client, payer, recent_blockhash) = program_test().start().await;
-    let stake_pool_accounts = StakePoolAccounts::new();
+    
+    let stake_pool_accounts = 
+        StakePoolAccounts::new();
+    
     stake_pool_accounts
         .initialize_stake_pool(&mut banks_client, &payer, &recent_blockhash)
         .await
         .unwrap();
 
+    println!("--- about to call simple_add_validator_stake_account");
     let validator_stake_account: ValidatorStakeAccount = simple_add_validator_stake_account(
         &mut banks_client,
         &payer,
         &recent_blockhash,
         &stake_pool_accounts,
-    )
-    .await;
+    ).await;
 
-    let deposit_info: DepositInfo = simple_deposit(
-        &mut banks_client,
-        &payer,false,
-        &recent_blockhash,
-        &stake_pool_accounts,
-        &validator_stake_account,
-    )
-    .await;
+    println!("validator_stake_account {:?}",validator_stake_account.stake_account);
 
-    let tokens_to_burn = deposit_info.pool_tokens / 4;
-
-    // Delegate tokens for burning
-    delegate_tokens(
-        &mut banks_client,
-        &payer,
-        &recent_blockhash,
-        &deposit_info.user_pool_account,
-        &deposit_info.user,
-        &stake_pool_accounts.withdraw_authority,
-        tokens_to_burn,
-    )
-    .await;
-
-    (
+    return (
         banks_client,
         payer,
         recent_blockhash,
         stake_pool_accounts,
         validator_stake_account,
-        deposit_info,
-        tokens_to_burn,
     )
 }
 
 #[tokio::test]
-async fn test_stake_pool_withdraw() {
+async fn test_add_liquidity() {
+    
+    println!("---------------------------------");
+    println!("---- START test_add_liquidity ---");
+    println!("---------------------------------");
+
     let (
         mut banks_client,
         payer,
         recent_blockhash,
         stake_pool_accounts,
         validator_stake_account,
-        deposit_info,
-        tokens_to_burn,
     ) = setup().await;
 
-    // Create stake account to withdraw to
-    let user_stake_recipient = Keypair::new();
-    let initial_stake_lamports = create_blank_stake_account(
+    println!("--- about to call prepare_wsol_deposit");
+    let deposit_info: DepositInfo = prepare_wsol_deposit(
         &mut banks_client,
         &payer,
         &recent_blockhash,
-        &user_stake_recipient,
     )
     .await;
+    println!("wsol_tokens balance={}",deposit_info.pool_tokens);
+    let wsol_to_deposit = deposit_info.pool_tokens / 2;
 
-    // Save stake pool state before withdrawal
-    let stake_pool_before =
-        get_account(&mut banks_client, &stake_pool_accounts.stake_pool.pubkey()).await;
-    let stake_pool_before =
-        state::StakePool::deserialize(&stake_pool_before.data.as_slice()).unwrap();
-
-    // Save validator stake account record before withdrawal
-    let validator_stake_list = get_account(
+    // Create lp token account to send tokens to the user
+    let metal_lp_user_dest = Keypair::new();
+    println!("create_token_account metal_lp_user_dest");
+    let result = create_token_account (
         &mut banks_client,
-        &stake_pool_accounts.validator_stake_list.pubkey(),
+        &payer,
+        &recent_blockhash,
+        &metal_lp_user_dest,
+        &stake_pool_accounts.meta_lp_mint_acc.pubkey(),
+        &payer.pubkey()
     )
     .await;
-    let validator_stake_list =
-        state::ValidatorStakeList::deserialize(validator_stake_list.data.as_slice()).unwrap();
-    let validator_stake_item_before = validator_stake_list
-        .find(&validator_stake_account.vote.pubkey())
-        .unwrap();
+
+    // Save state before addliq
+    let prev_liq_pool_wsol_dest_account_balance =
+    get_token_balance(&mut banks_client, &stake_pool_accounts.liq_pool_wsol_acc.pubkey()).await;
+    println!("prev_liq_pool_wsol_dest_account_balance {}",prev_liq_pool_wsol_dest_account_balance);
 
     // Save user token balance
     let user_token_balance_before =
         get_token_balance(&mut banks_client, &deposit_info.user_pool_account).await;
 
-    let new_authority = Pubkey::new_unique();
-    stake_pool_accounts
-        .withdraw_stake(
-            &mut banks_client,
-            &payer,
-            &recent_blockhash,
-            &user_stake_recipient.pubkey(),
-            &deposit_info.user_pool_account,
-            &validator_stake_account.stake_account,
-            &new_authority,
-            tokens_to_burn,
+    //let new_authority = Pubkey::new_unique();
+    //----------------------
+    let mut transaction = Transaction::new_with_payer(
+        &[instruction::instruction_add_liquidity(
+            wsol_to_deposit,
+            &id(),
+            &stake_pool_accounts.liq_pool_state_acc.pubkey(),
+            &spl_token::id(),
+            &stake_pool_accounts.meta_lp_mint_acc.pubkey(),
+            &stake_pool_accounts.liq_pool_authority,
+            &deposit_info.user_pool_account,//  .user_wsol_source_account,
+            &payer.pubkey(), //user acc withdraw auth
+            &stake_pool_accounts.liq_pool_wsol_acc.pubkey(),
+            &metal_lp_user_dest.pubkey(),
         )
-        .await
-        .unwrap();
-
-    // Check pool stats
-    let stake_pool = get_account(&mut banks_client, &stake_pool_accounts.stake_pool.pubkey()).await;
-    let stake_pool = state::StakePool::deserialize(&stake_pool.data.as_slice()).unwrap();
-    assert_eq!(
-        stake_pool.stake_total,
-        stake_pool_before.stake_total - tokens_to_burn
+        .unwrap()],
+        Some(&payer.pubkey()),
     );
-    assert_eq!(
-        stake_pool.pool_total,
-        stake_pool_before.pool_total - tokens_to_burn
-    );
+    println!("----------------------------------------");
+    println!("-- SEND TXN instruction_add_liquidity --");
+    println!("----------------------------------------");
+    transaction.sign(&[&payer], recent_blockhash);
+    let result = banks_client.process_transaction(transaction)
+        .await;
+    //println!("{:?}",result);
 
-    // Check validator stake list storage
-    let validator_stake_list = get_account(
-        &mut banks_client,
-        &stake_pool_accounts.validator_stake_list.pubkey(),
-    )
-    .await;
-    let validator_stake_list =
-        state::ValidatorStakeList::deserialize(validator_stake_list.data.as_slice()).unwrap();
-    let validator_stake_item = validator_stake_list
-        .find(&validator_stake_account.vote.pubkey())
-        .unwrap();
+    assert!(!result.is_err(), "TXN ERROR");
+
+    // result.err()
+    // .unwrap();
+
+    // Check liq-pool stats
+    let liq_pool_wsol_dest_account_balance =
+    get_token_balance(&mut banks_client, &stake_pool_accounts.liq_pool_wsol_acc.pubkey()).await;
+    println!("liq_pool_wsol_dest_account_balance {}",liq_pool_wsol_dest_account_balance);
     assert_eq!(
-        validator_stake_item.balance,
-        validator_stake_item_before.balance - tokens_to_burn
+        liq_pool_wsol_dest_account_balance,
+        prev_liq_pool_wsol_dest_account_balance + wsol_to_deposit
     );
 
-    // Check tokens burned
+    // Check tokens deposited
     let user_token_balance =
         get_token_balance(&mut banks_client, &deposit_info.user_pool_account).await;
     assert_eq!(
         user_token_balance,
-        user_token_balance_before - tokens_to_burn
+        user_token_balance_before - wsol_to_deposit
     );
 
-    // Check validator stake account balance
-    let validator_stake_account =
-        get_account(&mut banks_client, &validator_stake_account.stake_account).await;
+    // Check meta-lp tokens received
+    // {
+    //     let user_token_balance =
+    //         get_token_balance(&mut banks_client, &metal_lp_user_dest.pubkey()).await;
+    //     assert_eq!(
+    //         user_token_balance,
+    //         wsol_to_deposit
+    //     );
+    // }
+
+    // Check user recipient stake account balance
+    // let user_stake_recipient_account =
+    //     get_account(&mut banks_client, &user_stake_recipient.pubkey()).await;
+    // assert_eq!(
+    //     user_stake_recipient_account.lamports,
+    //     initial_stake_lamports + wsol_to_deposit
+    // );
+}
+
+#[tokio::test]
+async fn test_sell_st_sol() {
+    
+    println!("-------------------------------");
+    println!("---- START test_sell_st_sol ---");
+    println!("-------------------------------");
+
+    let (
+        mut banks_client,
+        payer,
+        recent_blockhash,
+        stake_pool_accounts,
+        validator_stake_account,
+    ) = setup().await;
+
+    // Get stake pool stake (and check if it is initialized)
+    let stake_pool_account = get_account(&mut banks_client, &stake_pool_accounts.stake_pool.pubkey()).await;
+    let stake_pool_data_before =
+        state::StakePool::deserialize(&stake_pool_account.data.as_slice()).unwrap();
+    if !stake_pool_data_before.is_initialized() {
+        panic!("stake_pool_data_before not initialized");
+    }
+
+    println!("--- about to call simple_deposit");
+    //call simple_deposit so the user_acc has some stSOL to sell
+    // simple_deposit  does the entire thing: creates acc, stakes and deposits, so the user acc gets stsOL
+    let deposit_info: DepositInfo = simple_deposit(//banks_client: &mut BanksClient, payer: &Keypair, recent_blockhash: &Hash, 
+        //stake_pool_accounts: &StakePoolAccounts, validator_stake_account: &ValidatorStakeAccount,
+        &mut banks_client,
+        &payer, true,
+        &recent_blockhash,
+        &stake_pool_accounts,
+        &validator_stake_account
+    ).await;
+
+    // let deposit_info: DepositInfo = prepare_st_sol_deposit(
+    //     &mut banks_client,
+    //     &stake_pool_accounts.pool_mint.pubkey(),
+    //     &stake_pool_data_before.pool_mint_autho
+    //     &payer,
+    //     &recent_blockhash,
+    // )
+    // .await;
+
+    let prev_user_stsol_account_balance =
+        get_token_balance(&mut banks_client, &deposit_info.user_pool_account).await;
+    println!("prev_user_stsol_account_balance={}",prev_user_stsol_account_balance);
+
+    // Create wsol dest account to send wsol
+    let wsol_user_dest_acc = Keypair::new();
+    println!("create_token_account wsol_user_dest_acc");
+    let result = create_token_account (
+        &mut banks_client,
+        &payer,
+        &recent_blockhash,
+        &wsol_user_dest_acc,
+        &String::from(W_SOL_1111111_MINT_ACCOUNT).parse().unwrap(),
+        &payer.pubkey()
+    )
+    .await;
+
+    // Save state before sell
+    let prev_liq_pool_wsol_account_balance = get_token_balance(&mut banks_client, &stake_pool_accounts.liq_pool_wsol_acc.pubkey()).await;
+    let prev_liq_pool_st_sol_account_balance = get_token_balance(&mut banks_client, &stake_pool_accounts.liq_pool_st_sol_acc.pubkey()).await;
+    println!("--- prev_liq_pool wsol/stSOL {}/{}",prev_liq_pool_wsol_account_balance,prev_liq_pool_st_sol_account_balance);
+
+    let pre_user_stsol_balance = get_token_balance(&mut banks_client, &deposit_info.user_pool_account).await;
+    println!("-- pre_user_st_sol_balance {}",pre_user_stsol_balance);
+
+    let stsol_to_sell:u64 = 50_000;
+
+    //let new_authority = Pubkey::new_unique();
+    //----------------------
+    let mut transaction = Transaction::new_with_payer(
+        &[instruction::instruction_sell_stsol(
+            stsol_to_sell,
+            &id(),
+            &stake_pool_accounts.stake_pool.pubkey(),
+            &stake_pool_accounts.liq_pool_state_acc.pubkey(),
+            &spl_token::id(),
+            &stake_pool_accounts.liq_pool_wsol_acc.pubkey(),
+            &stake_pool_accounts.liq_pool_st_sol_acc.pubkey(),
+            &stake_pool_accounts.liq_pool_authority,
+            &wsol_user_dest_acc.pubkey(), //where to send the wsol
+            &deposit_info.user_pool_account,//  .user_source_account,
+            &payer.pubkey(), //user acc withdraw auth
+        )
+        .unwrap()],
+        Some(&payer.pubkey()),
+    );
+    println!("-------------------------------------");
+    println!("-- SEND TXN instruction_sell_stsol --");
+    println!("-------------------------------------");
+    transaction.sign(&[&payer], recent_blockhash);
+    let result = banks_client.process_transaction(transaction)
+        .await;
+    //println!("{:?}",result);
+
+    assert!(!result.is_err(), "TXN ERROR");
+
+    // result.err()
+    // .unwrap();
+
+    let valued = stsol_to_sell; //TODO compute value correctly
+    let fee = processor::proportional(valued,stake_pool_data_before.fee.numerator as u128, stake_pool_data_before.fee.denominator as u128).unwrap();
+
+    // Check liq-pool wsol balance after sell
+    // Check liq-pool st_sol_tokens after sell
+    let post_liq_pool_wsol_account_balance = get_token_balance(&mut banks_client, &stake_pool_accounts.liq_pool_wsol_acc.pubkey()).await;
+    let post_liq_pool_st_sol_account_balance = get_token_balance(&mut banks_client, &stake_pool_accounts.liq_pool_st_sol_acc.pubkey()).await;
+    println!("-- post_liq_pool wsol/stSOL {}/{}",post_liq_pool_wsol_account_balance,post_liq_pool_st_sol_account_balance);
     assert_eq!(
-        validator_stake_account.lamports,
-        validator_stake_item.balance
+        post_liq_pool_wsol_account_balance,
+        prev_liq_pool_wsol_account_balance - stsol_to_sell + fee
+    );
+    assert_eq!(
+        post_liq_pool_st_sol_account_balance,
+        prev_liq_pool_st_sol_account_balance + stsol_to_sell
+    );
+
+    // Check user stSol balance after sell
+    let post_user_stsol_balance =
+        get_token_balance(&mut banks_client, &deposit_info.user_pool_account).await;
+    println!("-- post_user_st_sol_balance {}",post_user_stsol_balance);
+    assert_eq!(
+        post_user_stsol_balance,
+        prev_user_stsol_account_balance - stsol_to_sell
     );
 
     // Check user recipient stake account balance
-    let user_stake_recipient_account =
-        get_account(&mut banks_client, &user_stake_recipient.pubkey()).await;
-    assert_eq!(
-        user_stake_recipient_account.lamports,
-        initial_stake_lamports + tokens_to_burn
-    );
+    // let user_stake_recipient_account =
+    //     get_account(&mut banks_client, &user_stake_recipient.pubkey()).await;
+    // assert_eq!(
+    //     user_stake_recipient_account.lamports,
+    //     initial_stake_lamports + wsol_to_deposit
+    // );
 }
 
+/*
 #[tokio::test]
 async fn test_stake_pool_withdraw_with_wrong_stake_program() {
     let (
@@ -685,7 +806,7 @@ async fn test_stake_pool_withdraw_token_delegate_was_not_setup() {
 
     let deposit_info: DepositInfo = simple_deposit(
         &mut banks_client,
-        &payer, false,
+        &payer,
         &recent_blockhash,
         &stake_pool_accounts,
         &validator_stake_account,
@@ -753,7 +874,7 @@ async fn test_stake_pool_withdraw_with_low_delegation() {
 
     let deposit_info: DepositInfo = simple_deposit(
         &mut banks_client,
-        &payer,false,
+        &payer,
         &recent_blockhash,
         &stake_pool_accounts,
         &validator_stake_account,
@@ -813,3 +934,4 @@ async fn test_stake_pool_withdraw_with_low_delegation() {
         ),
     }
 }
+*/
